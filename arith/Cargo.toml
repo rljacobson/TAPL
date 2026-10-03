@@ -1,0 +1,8 @@
+[package]
+name = "arith"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+nom.workspace = true
+auto-args.workspace = true

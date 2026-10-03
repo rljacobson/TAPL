@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+  "arith",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Robert Jacobson <rljacobson@gmail.com>"]
+description = "Rust implementations of the examples from Types and Programming Languages by Benjamin C. Pierce"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rljacobson/TAPL"
+
+# Do not publish to crates.io
+publish = false
+
+
+[workspace.dependencies]
+nom = "7.1.3"
+auto-args = "0.3"
