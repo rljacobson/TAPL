@@ -8,29 +8,22 @@ an `iszero` test function.
 */
 
 use nom::{
+  IResult,
+  Parser,
   branch::alt,
   bytes::complete::{
     is_not,
     tag,
-    take_until
+    take_until,
   },
   character::complete::multispace1,
-  combinator::{
-    map,
-    value
-  },
-  error::{
-    ParseError,
-    Error
-  },
-  IResult,
+  error::Error,
   multi::many0,
   sequence::{
     delimited,
-    pair,
-    terminated,
-    tuple
+    terminated
   },
+  combinator::value
 };
 
 use crate::ast::{BTerm, Term};
@@ -42,172 +35,148 @@ const CLOSE_COMMENT: &str = "*/";
 /// Begins an end-of-line comment.
 const EOL_COMMENT: &str = "//";
 
-fn parse_keyword(input: &str) -> IResult<&str, BTerm> {
-  let (rest, head) = alt((
-    tag("0"),
-    tag("zero"),
-    tag("true"),
-    tag("false"),
-  ))(input)?;
-
-  let term = match head {
-
-    | "0"
-    | "zero" => {
-      Term::Zero
-    },
-
-    "true" => Term::True,
-
-    "false" => Term::False,
-
-    _ => {
-      unreachable!()
-    }
-  };
-
-  Ok((rest, term.boxed()))
-}
-
 /// A convenience function that returns a term or a parse error.
 pub fn parse(input: &str) -> Result<BTerm, nom::Err<Error<&str>>> {
-  parse_term(input).map(|(_, term)| term)
+  parse_term.parse(input).map(|(_, term)| term)
 }
 
 
 pub fn parse_term(input: &str) -> IResult<&str, BTerm> {
-  ws(
-    | text | alt((
-      parse_keyword,
-      parse_succ,
-      parse_pred,
-      parse_iszero,
-      parse_if
-    ))(text)
-  )(input)
+  ws(alt((
+    parse_keyword,
+    parse_succ,
+    parse_pred,
+    parse_iszero,
+    parse_if,
+  ))).parse(input)
+}
+
+fn parse_keyword(input: &str) -> IResult<&str, BTerm> {
+  alt((
+    tag("0"),
+    tag("zero"),
+    tag("true"),
+    tag("false"),
+  ))
+      .map(|head| match head {
+        "0" | "zero" => Term::Zero.boxed(),
+        "true" => Term::True.boxed(),
+        "false" => Term::False.boxed(),
+        _ => unreachable!(),
+      })
+      .parse(input)
 }
 
 /// Parses a unary function of the form `function(arg)`, returning `arg` parsed as a `BTerm`.
-fn parse_function_application<'s>(function: &'static str, input: &'s str) -> IResult<&'s str, BTerm> {
+fn parse_function_application<'a>(
+  function: &'static str,
+) -> impl Parser<&'a str, Output = BTerm, Error = Error<&'a str>>
+{
   delimited(
-    terminated(tag(function), tag("(")), // No whitespace allowed between function name and `(`.
+    terminated(tag(function), tag("(")),
     parse_term,
-    tag(")")
-  )(input)
+    tag(")"),
+  )
 }
 
 /// Parses `succ(arg)`
 fn parse_succ(input: &str) -> IResult<&str, BTerm> {
-  let (rest, pred_term) = parse_function_application("succ", input)?;
-  let term = Term::Succ(pred_term);
-
-  Ok((rest, term.boxed()))
+  parse_function_application("succ")
+      .map(|term| Term::Succ(term).boxed())
+      .parse(input)
 }
 
 /// Parses `pred(arg)`
 fn parse_pred(input: &str) -> IResult<&str, BTerm> {
-  let (rest, succ_term): (&str, BTerm) = parse_function_application("pred", input)?;
-  let term = Term::Pred(succ_term);
-
-  Ok((rest, term.boxed()))
+  parse_function_application("pred")
+      .map(|term| Term::Pred(term).boxed())
+      .parse(input)
 }
 
 /// Parses `iszero(arg)`
 fn parse_iszero(input: &str) -> IResult<&str, BTerm> {
-  let (rest, succ_term): (&str, BTerm) = parse_function_application("iszero", input)?;
-  let term = Term::IsZero(succ_term);
-
-  Ok((rest, term.boxed()))
+  parse_function_application("iszero")
+      .map(|term| Term::IsZero(term).boxed())
+      .parse(input)
 }
-
 
 /// Parses `if guard then branch_true else branch_false`
 fn parse_if(input: &str) -> IResult<&str, BTerm> {
-  let (rest, (_if, guard, _then, branch_true, _else, branch_false))
-    = tuple((
-      tag("if"),
-      parse_term,
-      tag("then"),
-      parse_term,
-      tag("else"),
-      parse_term
-    ))(input)?;
-
-  let term = Term::If {
-    guard,
-    branch_true,
-    branch_false
-  };
-
-  Ok((rest, term.boxed()))
+  (
+    tag("if"),
+    parse_term,
+    tag("then"),
+    parse_term,
+    tag("else"),
+    parse_term,
+  )
+      .map(|(_, guard, _, branch_true, _, branch_false)| {
+        Term::If {
+          guard,
+          branch_true,
+          branch_false,
+        }
+            .boxed()
+      })
+      .parse(input)
 }
-
 
 
 // region Auxiliary parsers for ignorables.
 
 
 /// Noms surrounding whitespace, including newlines and comments.
-fn ws<'a, F: 'a, O, E: ParseError<&'a str>>(inner: F) -> impl Fn(&'a str) -> IResult<&'a str, O, E>
-  where
-      F: Fn(&'a str) -> IResult<&'a str, O, E>,
+fn ws<'a, O, P>(inner: P) -> impl Parser<&'a str, Output = O, Error = Error<&'a str>>
+where
+    P: Parser<&'a str, Output = O, Error = Error<&'a str>>,
 {
-  move |i| {
-    delimited(
-      &pskip,
-      &inner,
-      &pskip
-    )(i)
-  }
+  delimited(pskip(), inner, pskip())
 }
 
 /// Noms trailing whitespace, including newlines and comments.
 #[allow(dead_code)]
-fn wst<'a, F: 'a, O, E: ParseError<&'a str>>(inner: F) -> impl Fn(&'a str) -> IResult<&'a str, O, E>
-  where
-      F: Fn(&'a str) -> IResult<&'a str, O, E>,
+fn wst<'a, O, P>(inner: P) -> impl Parser<&'a str, Output = O, Error = Error<&'a str>>
+where
+    P: Parser<&'a str, Output = O, Error = Error<&'a str>>,
 {
-  move |i| {
-    terminated(
-      &inner,
-      &pskip
-    )(i)
-  }
+  terminated(inner, pskip())
 }
 
 /// Noms whitespace, including newlines and comments, returning `()`.
-pub fn pskip<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, (), E>
-{
-  map(
-    many0(
-      alt((map(multispace1, |_| ()), pinline_comment, peol_comment))
-    ),
-    |_| ()
-  )(i)
+pub fn pskip<'a>() -> impl Parser<&'a str, Output = (), Error = Error<&'a str>> {
+  value(
+    (),
+    many0(alt((
+      value((), multispace1),
+      pinline_comment(),
+      peol_comment(),
+    ))),
+  )
 }
 
 
 /// Noms eol comments, excluding newlines, returning `()`.
-pub fn peol_comment<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, (), E>
-{
+pub fn peol_comment<'a>() -> impl Parser<&'a str, Output = (), Error = Error<&'a str>> {
   value(
-    (), // Output is thrown away.
-    pair(tag(EOL_COMMENT), is_not("\n\r"))
-  )(i)
+    (),
+    (
+      tag(EOL_COMMENT),
+      is_not("\n\r"),
+    ),
+  )
 }
 
 
 /// Noms block comments, excluding surrounding whitespace, returning `()`.
-pub fn pinline_comment<'a, E: ParseError<&'a str>>(i: &'a str) -> IResult<&'a str, (), E>
-{
-  map(
-    tuple((
+pub fn pinline_comment<'a>() -> impl Parser<&'a str, Output = (), Error = Error<&'a str>> {
+  value(
+    (),
+    (
       tag(OPEN_COMMENT),
       take_until(CLOSE_COMMENT),
-      tag(CLOSE_COMMENT)
-    )),
-    |_| () // Output is thrown away.
-  )(i)
+      tag(CLOSE_COMMENT),
+    ),
+  )
 }
 
 // endregion
